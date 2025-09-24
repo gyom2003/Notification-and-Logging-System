@@ -1,66 +1,65 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 )
-//obj part
+
+
 type Notification struct {
-	ID    int
-	Channel  string
-	Message string
-	TimeRef time.Time
+	ID        int
+	Channel   string
+	Target    string
+	Message   string
+	Timestamp time.Time
 }
 type Notifier interface {
-	Send(message string) error
+	Send(target string, message string) error
 	GetName() string
 }
 
-//verid caneaux de notifs:
-type EmailNotifier struct {}
-type PushNotifier struct {}
-type SMSNotifer struct {
-	PhoneNumber string
-}
+// EmailNotifier
+type EmailNotifier struct{}
 
-//matcher les méthodes avec l'interface pr email, push notif et SMS
-func (e EmailNotifier) Send(message string) error {
-	fmt.Printf("email envoie à partir de '%s' ", message)
-	return nil
-}
-func (e EmailNotifier) GetName() string {return "Email"}
-
-func (p PushNotifier) Send(message string) error {
-	fmt.Printf("[PUSH] Envoi de '%s' réussi", message)
-	return nil
-}
-func (p PushNotifier) GetName() string { return "Push" }
-
-func (s SMSNotifer) Send(message string) error {
-	if len(s.PhoneNumber) < 2 || s.PhoneNumber[:2] != "06" {
-		return errors.New("Numéro invalide : doit commencer par '06'")
+func (e EmailNotifier) Send(target string, message string) error {
+	if !strings.Contains(target, "@") {
+		return errors.New("❌ Adresse email invalide")
 	}
-
-	fmt.Printf("[SMS] Envoi de '%s' au %s réussi", message, s.PhoneNumber)
+	fmt.Printf("[EMAIL] Envoi de '%s' à %s réussi ✅\n", message, target)
 	return nil
 }
-func (s SMSNotifer) GetName() string {return "SMS"}
+func (e EmailNotifier) GetName() string { return "Email" }
 
-//storer la data
+// SMSNotifier
+type SMSNotifier struct{}
+
+func (s SMSNotifier) Send(target string, message string) error {
+	if len(target) < 2 || target[:2] != "06" {
+		return errors.New("❌ Numéro invalide : doit commencer par '06'")
+	}
+	fmt.Printf("[SMS] Envoi de '%s' au %s réussi ✅\n", message, target)
+	return nil
+}
+func (s SMSNotifier) GetName() string { return "SMS" }
+
 type Storer interface {
 	Add(n *Notification) error
-	GetAll() ([]*Notification, error)	
+	GetAll() ([]*Notification, error)
 }
+
 type MemoryStore struct {
 	notifications []*Notification
-	nextID int
+	nextID        int
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		notifications: []*Notification{},
-		nextID: 1,
+		nextID:        1,
 	}
 }
 
@@ -75,47 +74,89 @@ func (ms *MemoryStore) GetAll() ([]*Notification, error) {
 	return ms.notifications, nil
 }
 
-
-
 func main() {
 	store := NewMemoryStore()
-	notifiers := []Notifier{
-		EmailNotifier{},
-		SMSNotifer{PhoneNumber: "0612345678"},
-		SMSNotifer{PhoneNumber: "0711111111"}, // invalide
-		PushNotifier{},
-	}
+	reader := bufio.NewReader(os.Stdin)
 
-	message := "Hello"
+	fmt.Println("=== Simulateur de Notifications ===")
 
-	for _, notifier := range notifiers {
-		err := notifier.Send(message)
-		if err != nil {
-			fmt.Printf("[ERREUR - %s] %v\n", notifier.GetName(), err)
-			continue
-		}
+	for {
+		fmt.Println("\n--- Menu ---")
+		fmt.Println("1. Créer une notification")
+		fmt.Println("2. Voir l'historique")
+		fmt.Println("3. Quitter")
+		fmt.Print("Votre choix: ")
 
-		//si pas err
-		notification := &Notification{
-			Channel:   notifier.GetName(),
-			Message:   message,
-			TimeRef: time.Now(),
-		}
-		store.Add(notification)
-	}
+		choice := readLine(reader)
 
-	fmt.Printf("résumé des notifications réussites")
-	archived, _ := store.GetAll()
-	if len(archived) == 0 {
-		fmt.Println("aucune notification pour l'instant")
-	} else {
-		for _, n := range archived {
-			fmt.Printf("ID: %d | Canal: %s | Message: '%s' | Date: %s\n",
-			n.ID, n.Channel, n.Message, n.TimeRef.Format("2006-01-02 15:04:05"))
-
+		switch choice {
+		case "1":
+			handleCreateNotification(reader, store)
+		case "2":
+			handleListNotifications(store)
+		case "3":
+			fmt.Println("👋 Au revoir!")
+			return
+		default:
+			fmt.Println("❌ Choix invalide, réessayez.")
 		}
 	}
 }
 
+func handleCreateNotification(reader *bufio.Reader, store Storer) {
+	fmt.Print("Choisissez le type (sms/email): ")
+	ntype := strings.ToLower(readLine(reader))
 
+	var notifier Notifier
+	switch ntype {
+	case "sms":
+		notifier = SMSNotifier{}
+	case "email":
+		notifier = EmailNotifier{}
+	default:
+		fmt.Println("type non supporté")
+		return
+	}
 
+	fmt.Print("Entrez le destinataire: ")
+	target := readLine(reader)
+
+	fmt.Print("Entrez le message: ")
+	message := readLine(reader)
+
+	err := notifier.Send(target, message)
+	if err != nil {
+		fmt.Printf("[ERREUR - %s] %v\n", notifier.GetName(), err)
+		return
+	}
+
+	// Archivage
+	notification := &Notification{
+		Channel:   notifier.GetName(),
+		Target:    target,
+		Message:   message,
+		Timestamp: time.Now(),
+	}
+	store.Add(notification)
+
+	fmt.Println("✅ Notification envoyée et archivée.")
+}
+
+func handleListNotifications(store Storer) {
+	archived, _ := store.GetAll()
+	if len(archived) == 0 {
+		fmt.Println("Aucune notification envoyée avec succès.")
+		return
+	}
+
+	fmt.Println("\n=== Historique des envois réussis ===")
+	for _, n := range archived {
+		fmt.Printf("ID: %d | Canal: %s | Destinataire: %s | Message: '%s' | Date: %s\n",
+			n.ID, n.Channel, n.Target, n.Message, n.Timestamp.Format("2006-01-02 15:04:05"))
+	}
+}
+
+func readLine(reader *bufio.Reader) string {
+	input, _ := reader.ReadString('\n')
+	return strings.TrimSpace(input)
+}
